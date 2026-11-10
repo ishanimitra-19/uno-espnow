@@ -2,6 +2,12 @@
 
 A simple UNO game for **2–3 players**, built for ESP32 LILYGO T-Display boards. Each player has a private hand on their own screen, while ESP-NOW keeps the shared game state synchronized.
 
+<p align="center">
+  <img src="images/uno-lobby.jpg" alt="Wireless UNO lobby on a LILYGO T-Display, waiting for other players" width="360">
+</p>
+
+*The UNO lobby on a LILYGO T-Display, waiting for other players to join.*
+
 ## Requirements
 
 - One ESP32 LILYGO T-Display board per player
