@@ -175,7 +175,7 @@ void selectFirstPlayable() {
   }
 }
 
-void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
+void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len != sizeof(Message)) return;
 
   Message msg;
