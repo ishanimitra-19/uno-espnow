@@ -19,12 +19,20 @@
 #define PLAYER_TIMEOUT   3000
 #define HOLD_START_MS    4000   // Hold BOTH buttons this long to reset to the start screen
 #define WAIT_OPACITY     45     // Screen brightness (%) while it's NOT your turn
+#define STRICT_WILD4     1      // 1 = +4 only allowed when you hold no card of the current color (official rule)
 
 #define SCREEN_ROTATION  0      // Portrait (change to 2 if upside down)
 #define SCREEN_W         135
 #define SCREEN_H         240
 
 uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+// Lets the receive callback compile on both ESP32 board package 2.x and 3.x
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+typedef esp_now_recv_info_t RecvInfo;
+#else
+typedef uint8_t RecvInfo;
+#endif
 
 // ================================================================ CARDS & STATE
 enum { RED, YELLOW, GREEN, BLUE, WILD };
@@ -62,6 +70,8 @@ uint8_t  selected     = 0;
 bool     pickingColor = false;
 uint8_t  pendingWild  = 0;
 uint8_t  pickColor    = RED;
+bool     drewThisTurn = false;   // true after drawing: you may play only the drawn card, or pass
+uint8_t  drawnIndex   = 0;       // where the drawn card sits in the hand
 
 uint8_t  handCounts[MAX_PLAYERS] = {0, 0, 0};
 uint32_t lastHeard[MAX_PLAYERS]  = {0, 0, 0};
@@ -132,7 +142,7 @@ bool isNewer(const GameState &a, const GameState &b) {
 Card randomCard() {
   Card c;
   int r = random(108);
-  if (r < 76)       { c.color = random(4); c.value = random(10); }
+  if (r < 76)       { c.color = random(4); c.value = (random(19) + 1) / 2; }  // one 0, two each of 1-9
   else if (r < 84)  { c.color = random(4); c.value = V_SKIP; }
   else if (r < 92)  { c.color = random(4); c.value = V_REVERSE; }
   else if (r < 100) { c.color = random(4); c.value = V_DRAW2; }
@@ -141,7 +151,13 @@ Card randomCard() {
   return c;
 }
 
+bool hasColor(uint8_t color) {
+  for (int i = 0; i < handCount; i++) if (hand[i].color == color) return true;
+  return false;
+}
+
 bool isPlayable(Card c) {
+  if (c.value == V_WILD4) return !STRICT_WILD4 || !hasColor(game.topColor);
   return c.color == WILD || c.color == game.topColor || c.value == game.topValue;
 }
 
@@ -175,7 +191,7 @@ void selectFirstPlayable() {
   }
 }
 
-void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+void onReceive(const RecvInfo *info, const uint8_t *data, int len) {
   if (len != sizeof(Message)) return;
 
   Message msg;
@@ -237,6 +253,7 @@ void processInbox() {
 
 void onMyTurnStart() {
   pickingColor = false;
+  drewThisTurn = false;
 
   if (game.penalty > 0) {
     char text[24];
@@ -263,6 +280,7 @@ void adoptState(const GameState &next) {
     handCount = 0;
     selected = 0;
     pickingColor = false;
+    drewThisTurn = false;
     banner[0] = 0;
     if (game.phase == PLAYING && inGame(PLAYER_ID)) drawCards(START_HAND);
   }
@@ -321,6 +339,7 @@ void finishPlay(uint8_t index, uint8_t color) {
   Card c = hand[index];
   removeCard(index);
   pickingColor = false;
+  drewThisTurn = false;
 
   GameState next = game;
   next.seq++;
@@ -352,7 +371,11 @@ void finishPlay(uint8_t index, uint8_t color) {
 
 void playSelected() {
   Card c = hand[selected];
-  if (!isPlayable(c)) { showBanner("CAN'T PLAY THAT"); return; }
+  if (drewThisTurn && selected != drawnIndex) { showBanner("ONLY DRAWN CARD"); return; }
+  if (!isPlayable(c)) {
+    showBanner(c.value == V_WILD4 ? "+4 NOT ALLOWED" : "CAN'T PLAY THAT");
+    return;
+  }
 
   if (c.color == WILD) {
     pendingWild = selected;
@@ -364,14 +387,35 @@ void playSelected() {
   finishPlay(selected, c.color);
 }
 
-void drawAndPass() {
-  if (handCount >= MAX_HAND) showBanner("HAND FULL - PASS");
-  drawCards(1);
-
+void passTurn() {
+  drewThisTurn = false;
   GameState next = game;
   next.seq++;
   next.turn = nextPlayer(PLAYER_ID, game.dir, game.mask);
   commitState(next);
+}
+
+// UNO rule: draw one card. If it can be played you may play it (only that card)
+// or pass; if it can't be played, your turn ends.
+void drawOrPass() {
+  if (drewThisTurn) { passTurn(); return; }
+  if (handCount >= MAX_HAND) { showBanner("HAND FULL - PASS"); passTurn(); return; }
+
+  Card c = randomCard();
+  hand[handCount++] = c;
+  sortHand();
+  drewThisTurn = true;
+  for (int i = 0; i < handCount; i++) {
+    if (hand[i].color == c.color && hand[i].value == c.value) { drawnIndex = i; break; }
+  }
+
+  if (isPlayable(c)) {
+    selected = drawnIndex;
+    showBanner("PLAY IT OR PASS");
+  } else {
+    showBanner("NO MATCH - PASS");
+    passTurn();
+  }
 }
 
 void onLeftButton() {
@@ -389,7 +433,7 @@ void onRightButton() {
   if (game.turn != PLAYER_ID)   { showBanner("NOT YOUR TURN"); return; }
 
   if (pickingColor)                 finishPlay(pendingWild, pickColor);
-  else if (selected >= handCount)   drawAndPass();
+  else if (selected >= handCount)   drawOrPass();
   else                              playSelected();
 }
 
@@ -585,10 +629,9 @@ void drawReverseSymbol(int cx, int cy, float scale) {
 }
 
 void drawUnoCard(int x, int y, int w, int h, int r, uint8_t color, uint8_t value, bool dimmed, int wildHighlight = -1) {
+  // Wilds in your hand have color WILD (dark). Once played, they take the
+  // chosen color, so the card on the pile shows which color is active.
   uint16_t bg = dimmed ? paletteDim[color] : paletteFull[color];
-  if (value == V_WILD || value == V_WILD4) {
-    bg = dimmed ? COL_DARK_DIM : COL_DARK;
-  }
 
   spr.fillRoundRect(x, y, w, h, r, bg);
 
@@ -634,8 +677,9 @@ void drawDeckSlot(int x, int y, int w, int h, int r, bool dimmed) {
   int cy = y + h / 2;
   spr.setTextDatum(MC_DATUM);
   spr.setTextColor(TFT_WHITE, bg);
-  spr.drawString("+", cx, cy - 8, 4);
-  spr.drawString("DRAW", cx, cy + 16, 2);
+  // After you draw, this slot becomes the PASS button
+  spr.drawString(drewThisTurn ? ">" : "+", cx, cy - 8, 4);
+  spr.drawString(drewThisTurn ? "PASS" : "DRAW", cx, cy + 16, 2);
   spr.setTextDatum(TL_DATUM);
 }
 
@@ -662,15 +706,14 @@ void drawPlayingScreen() {
   drawUnoCard(14, 12, 34, 46, 4, game.topColor, game.topValue, false);
 
   spr.setTextColor(TFT_WHITE, TFT_BLACK);
-  if (banner[0]) {
-    spr.setTextColor(COL_YELLOW, TFT_BLACK);
-    spr.drawString(banner, 54, 26, 2);
-  } else if (!inGame(PLAYER_ID)) {
+  if (!inGame(PLAYER_ID)) {
     spr.drawString("Spectating", 58, 20, 2);
     spr.drawString("Next deal...", 58, 36, 2);
   } else if (pickingColor) {
-    spr.drawString("Pick a", 66, 20, 2);
-    spr.drawString("color", 66, 36, 2);
+    static const char *colorNames[4] = {"RED", "YELLOW", "GREEN", "BLUE"};
+    spr.drawString("Pick color:", 55, 20, 2);
+    spr.setTextColor(paletteFull[pickColor], TFT_BLACK);
+    spr.drawString(colorNames[pickColor], 55, 36, 2);
   } else if (game.turn == PLAYER_ID) {
     spr.drawString("Your turn!", 62, 26, 2);
   } else {
@@ -685,6 +728,17 @@ void drawPlayingScreen() {
       spr.drawString(pBuf, 66, 36, 2);
     }
   }
+
+  // Message line (or color-picker help) between the top card and the hand
+  spr.setTextDatum(TC_DATUM);
+  if (banner[0]) {
+    spr.setTextColor(COL_YELLOW, TFT_BLACK);
+    spr.drawString(banner, SCREEN_W / 2, 82, 2);
+  } else if (pickingColor) {
+    spr.setTextColor(TFT_WHITE, TFT_BLACK);
+    spr.drawString("L: change  R: OK", SCREEN_W / 2, 82, 2);
+  }
+  spr.setTextDatum(TL_DATUM);
 
   // Card counts for every player in this game (yellow = whose turn it is)
   int playerTotal = countBits(game.mask);
@@ -717,11 +771,13 @@ void drawPlayingScreen() {
     else drawUnoCard(116, 118, 67, 91, 8, hand[nextSlot].color, hand[nextSlot].value, true);
   }
 
-  if (selected == handCount) {
+  if (pickingColor) {
+    // Show the wild / +4 in the color currently being picked
+    drawUnoCard(31, 113, 74, 100, 9, pickColor, hand[pendingWild].value, false, pickColor);
+  } else if (selected == handCount) {
     drawDeckSlot(31, 113, 74, 100, 9, false);
   } else {
-    int wildHi = pickingColor ? pickColor : -1;
-    drawUnoCard(31, 113, 74, 100, 9, hand[selected].color, hand[selected].value, false, wildHi);
+    drawUnoCard(31, 113, 74, 100, 9, hand[selected].color, hand[selected].value, false, -1);
   }
 }
 
