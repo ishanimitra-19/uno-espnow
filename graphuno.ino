@@ -9,7 +9,7 @@
 
 // ================================================================ CONFIGURATION
 #define TEAM_ID          1      // Match for all members on a team
-#define PLAYER_ID        2      // Unique for each member on a team (0, 1, or 2)
+#define PLAYER_ID        1      // Unique for each member on a team (0, 1, or 2)
 #define MAX_PLAYERS      3
 #define BUTTON_A         0      // Left button: cycle cards
 #define BUTTON_B         35     // Right button: play / draw
@@ -175,7 +175,7 @@ void selectFirstPlayable() {
   }
 }
 
-void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
+void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len != sizeof(Message)) return;
 
   Message msg;
