@@ -9,7 +9,7 @@
 
 // ================================================================ CONFIGURATION
 #define TEAM_ID          1      // Match for all members on a team
-#define PLAYER_ID        1      // Unique for each member on a team (0, 1, or 2)
+#define PLAYER_ID        2      // Unique for each member on a team (0, 1, or 2)
 #define MAX_PLAYERS      3
 #define BUTTON_A         0      // Left button: cycle cards
 #define BUTTON_B         35     // Right button: play / draw
@@ -17,7 +17,7 @@
 #define START_HAND       7
 #define MAX_HAND         24
 #define PLAYER_TIMEOUT   3000
-#define HOLD_START_MS    4000   // Hold BOTH buttons this long to start a new game
+#define HOLD_START_MS    4000   // Hold BOTH buttons this long to reset to the start screen
 #define WAIT_OPACITY     45     // Screen brightness (%) while it's NOT your turn
 
 #define SCREEN_ROTATION  0      // Portrait (change to 2 if upside down)
@@ -175,7 +175,7 @@ void selectFirstPlayable() {
   }
 }
 
-void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
   if (len != sizeof(Message)) return;
 
   Message msg;
@@ -302,6 +302,21 @@ void tryStartGame() {
   startGame();
 }
 
+// Sends every player back to the start (lobby) screen.
+void resetToLobby() {
+  GameState next = game;
+  next.round    = game.round + 1;
+  next.nonce    = random(1, 65535);
+  next.seq      = 1;
+  next.phase    = LOBBY;
+  next.mask     = 0;
+  next.turn     = 0;
+  next.dir      = 1;
+  next.penalty  = 0;
+  next.winner   = 0;
+  commitState(next);
+}
+
 void finishPlay(uint8_t index, uint8_t color) {
   Card c = hand[index];
   removeCard(index);
@@ -411,15 +426,14 @@ void loop() {
   if (a) onLeftButton();
   if (b) onRightButton();
 
-  // Hold BOTH buttons for HOLD_START_MS to start a new game.
+  // Hold BOTH buttons for HOLD_START_MS to reset everyone to the start screen.
   // holdFired makes it trigger only once per hold (must release to do it again).
   if (lastA == LOW && lastB == LOW) {
     if (bothSince == 0) {
       bothSince = millis();
     } else if (!holdFired && millis() - bothSince >= HOLD_START_MS) {
       holdFired = true;
-      if (countBits(liveMask()) >= 2) startGame();
-      else showBanner("NEED 2+ PLAYERS");
+      resetToLobby();
     }
   } else {
     bothSince = 0;
@@ -671,6 +685,21 @@ void drawPlayingScreen() {
       spr.drawString(pBuf, 66, 36, 2);
     }
   }
+
+  // Card counts for every player in this game (yellow = whose turn it is)
+  int playerTotal = countBits(game.mask);
+  int slot = 0;
+  spr.setTextDatum(TC_DATUM);
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    if (!inGame(i)) continue;
+    char cBuf[12];
+    if (i == PLAYER_ID) snprintf(cBuf, sizeof(cBuf), "You %d", handCount);
+    else                snprintf(cBuf, sizeof(cBuf), "P%d %d", i + 1, handCounts[i]);
+    spr.setTextColor(i == game.turn ? COL_YELLOW : TFT_WHITE, TFT_BLACK);
+    spr.drawString(cBuf, SCREEN_W * (2 * slot + 1) / (2 * playerTotal), 221, 2);
+    slot++;
+  }
+  spr.setTextDatum(TL_DATUM);
 
   if (!inGame(PLAYER_ID)) return;
 
