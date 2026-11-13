@@ -6,4 +6,6 @@ Upload `graphuno.ino` as its own Arduino sketch with TFT_eSPI set up for your bo
 
 Left cycles through cards or colors. Right plays, draws, or confirms a color.
 
+[UNO rules](https://www.unorules.com/)
+
 <img src="images/uno-lobby.jpg" alt="UNO lobby on a LILYGO T-Display" width="300">
