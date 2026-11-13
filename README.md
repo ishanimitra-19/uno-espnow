@@ -8,4 +8,4 @@ Left cycles through cards or colors. Right plays, draws, or confirms a color.
 
 [UNO rules](https://www.unorules.com/)
 
-<img src="images/uno-lobby.jpg" alt="UNO lobby on a LILYGO T-Display" width="300">
+<img src="images/uno-game.jpg" alt="UNO game in progress on a LILYGO T-Display" width="300">
