@@ -8,7 +8,12 @@ Left cycles through cards or colors. Right plays, draws, or confirms a color. Pr
 
 The logic of the game is in the backend, and the Figma UI design is the frontend. Both front and backend are in one file, in this github called graphuno.ino 
 
+# Set Up
 
+Connect three ESP 32 microcontrollers via USB-C to three different computers. 
+Open Arduino IDE, and upload the file called graphuno.ino, compile the sketch. Make sure BAUD is set to 115200. When clicking a device, make sure it is set to ESP 32 Dev Module. Then compile. 
+
+The LED of the ESP32 should now be open to the game of UNO. Have fun! 
 
 [UNO rules](https://www.unorules.com/)
 
